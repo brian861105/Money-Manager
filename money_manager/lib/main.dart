@@ -371,6 +371,8 @@ class _LedgerHomePageState extends State<LedgerHomePage> {
                       onChanged: _loading ? null : _selectLedger,
                     ),
                     const SizedBox(height: 16),
+                    _RecordList(records: _records),
+                    const SizedBox(height: 16),
                     _CreateRecordPanel(
                       categoryController: _categoryController,
                       descriptionController: _descriptionController,
@@ -378,8 +380,6 @@ class _LedgerHomePageState extends State<LedgerHomePage> {
                       saving: _saving,
                       onSubmit: _saving ? null : _createRecord,
                     ),
-                    const SizedBox(height: 16),
-                    _RecordList(records: _records),
                   ],
                 ),
               ),
