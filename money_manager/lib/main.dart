@@ -290,10 +290,11 @@ class _LedgerHomePageState extends State<LedgerHomePage> {
   }
 
   Future<void> _createRecord() async {
-    final amountText = _amountController.text.trim();
-    final parsedAmount = double.tryParse(amountText);
+    final parsedAmount = _parseAmount(_amountController.text);
     if (parsedAmount == null) {
-      setState(() => _error = 'Amount must be a number.');
+      setState(
+        () => _error = 'Amount must be a valid number, like -120 or 500.',
+      );
       return;
     }
 
@@ -325,6 +326,20 @@ class _LedgerHomePageState extends State<LedgerHomePage> {
         setState(() => _saving = false);
       }
     }
+  }
+
+  double? _parseAmount(String value) {
+    final normalized = value
+        .trim()
+        .replaceAll(',', '')
+        .replaceAll(' ', '')
+        .replaceAll('NT\$', '')
+        .replaceAll('\$', '')
+        .replaceAll('元', '');
+    if (normalized.isEmpty) {
+      return null;
+    }
+    return double.tryParse(normalized);
   }
 
   @override
@@ -509,7 +524,7 @@ class _CreateRecordPanel extends StatelessWidget {
               decoration: const InputDecoration(
                 border: OutlineInputBorder(),
                 labelText: 'Amount',
-                helperText: 'Example: -120.00 for expense, 500.00 for income',
+                helperText: 'Examples: -120, 500, NT\$1,200',
               ),
             ),
             const SizedBox(height: 12),
