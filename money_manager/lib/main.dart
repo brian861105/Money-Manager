@@ -1,17 +1,33 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+
+import 'src/api.dart';
+import 'src/auth.dart';
+import 'src/google_auth_provider.dart';
+import 'src/ledger.dart';
+import 'src/launcher.dart';
 
 void main() {
   runApp(const MoneyManagerApp());
 }
 
 class MoneyManagerApp extends StatelessWidget {
-  const MoneyManagerApp({super.key});
+  const MoneyManagerApp({
+    super.key,
+    MicroLedgerApi? api,
+    UrlLauncher? launcher,
+    GoogleAuthProvider? googleAuthProvider,
+  }) : _api = api,
+       _launcher = launcher,
+       _googleAuthProvider = googleAuthProvider;
+
+  final MicroLedgerApi? _api;
+  final UrlLauncher? _launcher;
+  final GoogleAuthProvider? _googleAuthProvider;
 
   @override
   Widget build(BuildContext context) {
+    final api = _api ?? MicroLedgerApi();
+    final launcher = _launcher ?? createUrlLauncher();
     return MaterialApp(
       title: 'Money Manager',
       debugShowCheckedModeBanner: false,
@@ -19,371 +35,313 @@ class MoneyManagerApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF0F766E)),
         useMaterial3: true,
       ),
-      home: const LedgerHomePage(),
+      home: AuthShell(
+        authController: AuthController(
+          api: api,
+          googleAuthProvider:
+              _googleAuthProvider ?? createGoogleAuthProvider(launcher),
+        ),
+        ledgerController: LedgerController(api: api),
+      ),
     );
   }
 }
 
-class ApiConfig {
-  static const baseUrl = String.fromEnvironment(
-    'API_BASE_URL',
-    defaultValue: 'http://localhost:8080',
-  );
-  static const devEmail = String.fromEnvironment(
-    'API_DEV_EMAIL',
-    defaultValue: 'you@example.com',
-  );
-}
+class AuthShell extends StatefulWidget {
+  const AuthShell({
+    required this.authController,
+    required this.ledgerController,
+    super.key,
+  });
 
-class ApiException implements Exception {
-  ApiException(this.statusCode, this.code, this.message);
-
-  final int statusCode;
-  final String code;
-  final String message;
+  final AuthController authController;
+  final LedgerController ledgerController;
 
   @override
-  String toString() => '$statusCode $code: $message';
+  State<AuthShell> createState() => _AuthShellState();
 }
 
-class Ledger {
-  const Ledger({
-    required this.id,
-    required this.name,
-    required this.type,
-    required this.ownerEmail,
-  });
-
-  factory Ledger.fromJson(Map<String, dynamic> json) {
-    return Ledger(
-      id: json['id'] as int,
-      name: json['name'] as String,
-      type: json['type'] as String,
-      ownerEmail: json['owner_email'] as String,
-    );
+class _AuthShellState extends State<AuthShell> {
+  @override
+  void initState() {
+    super.initState();
+    widget.authController.addListener(_handleAuthChanged);
+    widget.authController.loadCurrentSession();
   }
 
-  final int id;
-  final String name;
-  final String type;
-  final String ownerEmail;
-}
-
-class LedgerRecord {
-  const LedgerRecord({
-    required this.id,
-    required this.ledgerId,
-    required this.creatorEmail,
-    required this.date,
-    required this.category,
-    required this.description,
-    required this.amountCents,
-  });
-
-  factory LedgerRecord.fromJson(Map<String, dynamic> json) {
-    return LedgerRecord(
-      id: json['id'] as int,
-      ledgerId: json['ledger_id'] as int,
-      creatorEmail: json['creator_email'] as String,
-      date: DateTime.parse(json['date'] as String),
-      category: json['category'] as String,
-      description: json['description'] as String? ?? '',
-      amountCents: json['amount_cents'] as int,
-    );
+  @override
+  void dispose() {
+    widget.authController.removeListener(_handleAuthChanged);
+    widget.authController.dispose();
+    widget.ledgerController.dispose();
+    super.dispose();
   }
 
-  final int id;
-  final int ledgerId;
-  final String creatorEmail;
-  final DateTime date;
-  final String category;
-  final String description;
-  final int amountCents;
-}
-
-class MicroLedgerApi {
-  MicroLedgerApi({http.Client? client}) : _client = client ?? http.Client();
-
-  final http.Client _client;
-
-  Future<Ledger> getActiveLedger() async {
-    final json = await _send('GET', '/api/context/active-ledger');
-    return Ledger.fromJson(json['ledger'] as Map<String, dynamic>);
+  void _handleAuthChanged() {
+    if (widget.authController.session == null) {
+      if (widget.ledgerController.hasLoaded) {
+        widget.ledgerController.clear();
+      }
+      return;
+    }
+    if (!widget.ledgerController.hasLoaded) {
+      widget.ledgerController.loadInitialData();
+    }
   }
 
-  Future<Ledger> setActiveLedger(int ledgerId) async {
-    final json = await _send(
-      'PUT',
-      '/api/context/active-ledger',
-      body: {'ledger_id': ledgerId},
-    );
-    return Ledger.fromJson(json['ledger'] as Map<String, dynamic>);
-  }
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: Listenable.merge([
+        widget.authController,
+        widget.ledgerController,
+      ]),
+      builder: (context, _) {
+        final auth = widget.authController;
+        if (auth.loading) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
 
-  Future<List<Ledger>> listLedgers() async {
-    final json = await _send('GET', '/api/ledgers');
-    final items = json['ledgers'] as List<dynamic>;
-    return items
-        .map((item) => Ledger.fromJson(item as Map<String, dynamic>))
-        .toList();
-  }
+        final session = auth.session;
+        if (session == null) {
+          return SignedOutPage(
+            error: auth.error,
+            signingIn: auth.signingIn,
+            onLogin: auth.loginWithGoogle,
+          );
+        }
 
-  Future<List<LedgerRecord>> listRecords() async {
-    final json = await _send('GET', '/api/records?limit=100');
-    final items = json['records'] as List<dynamic>;
-    return items
-        .map((item) => LedgerRecord.fromJson(item as Map<String, dynamic>))
-        .toList();
-  }
-
-  Future<LedgerRecord> createRecord({
-    required String category,
-    required String description,
-    required int amountCents,
-  }) async {
-    final json = await _send(
-      'POST',
-      '/api/records',
-      body: {
-        'date': DateTime.now().toUtc().toIso8601String(),
-        'category': category,
-        'description': description,
-        'amount_cents': amountCents,
+        return LedgerHomePage(
+          session: session,
+          authController: auth,
+          ledgerController: widget.ledgerController,
+        );
       },
     );
-    return LedgerRecord.fromJson(json['record'] as Map<String, dynamic>);
   }
+}
 
-  Future<Map<String, dynamic>> _send(
-    String method,
-    String path, {
-    Map<String, dynamic>? body,
-  }) async {
-    final request = http.Request(
-      method,
-      Uri.parse('${ApiConfig.baseUrl}$path'),
+class SignedOutPage extends StatelessWidget {
+  const SignedOutPage({
+    required this.error,
+    required this.signingIn,
+    required this.onLogin,
+    super.key,
+  });
+
+  final String? error;
+  final bool signingIn;
+  final VoidCallback onLogin;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'Money Manager',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.headlineMedium,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Sign in to manage your micro-ledger.',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodyLarge,
+                  ),
+                  const SizedBox(height: 24),
+                  FilledButton.icon(
+                    onPressed: signingIn ? null : onLogin,
+                    icon: signingIn
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.login),
+                    label: const Text('Sign in with Google'),
+                  ),
+                  if (error != null) ...[
+                    const SizedBox(height: 16),
+                    Text(
+                      error!,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: theme.colorScheme.error),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
-    request.headers.addAll({
-      'Accept': 'application/json',
-      'Content-Type': 'application/json',
-      'X-Goog-Authenticated-User-Email':
-          'accounts.google.com:${ApiConfig.devEmail}',
-    });
-    if (body != null) {
-      request.body = jsonEncode(body);
-    }
-
-    final response = await http.Response.fromStream(
-      await _client.send(request),
-    );
-    if (response.statusCode == 204) {
-      return <String, dynamic>{};
-    }
-
-    final decoded = response.body.isEmpty
-        ? <String, dynamic>{}
-        : jsonDecode(response.body) as Map<String, dynamic>;
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      final error = decoded['error'] as Map<String, dynamic>?;
-      throw ApiException(
-        response.statusCode,
-        error?['code'] as String? ?? 'request_failed',
-        error?['message'] as String? ?? 'request failed',
-      );
-    }
-    return decoded;
-  }
-
-  void close() {
-    _client.close();
   }
 }
 
 class LedgerHomePage extends StatefulWidget {
-  const LedgerHomePage({super.key});
+  const LedgerHomePage({
+    required this.session,
+    required this.authController,
+    required this.ledgerController,
+    super.key,
+  });
+
+  final AuthSession session;
+  final AuthController authController;
+  final LedgerController ledgerController;
 
   @override
   State<LedgerHomePage> createState() => _LedgerHomePageState();
 }
 
 class _LedgerHomePageState extends State<LedgerHomePage> {
-  final _api = MicroLedgerApi();
   final _categoryController = TextEditingController(text: 'food');
   final _descriptionController = TextEditingController();
   final _amountController = TextEditingController();
 
-  bool _loading = true;
-  bool _saving = false;
-  String? _error;
-  Ledger? _activeLedger;
-  List<Ledger> _ledgers = const [];
-  List<LedgerRecord> _records = const [];
-
-  @override
-  void initState() {
-    super.initState();
-    _loadInitialData();
-  }
-
   @override
   void dispose() {
-    _api.close();
     _categoryController.dispose();
     _descriptionController.dispose();
     _amountController.dispose();
     super.dispose();
   }
 
-  Future<void> _loadInitialData() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final activeLedger = await _api.getActiveLedger();
-      final ledgers = await _api.listLedgers();
-      final records = await _api.listRecords();
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _activeLedger = activeLedger;
-        _ledgers = ledgers;
-        _records = records;
-      });
-    } catch (err) {
-      if (!mounted) {
-        return;
-      }
-      setState(() => _error = err.toString());
-    } finally {
-      if (mounted) {
-        setState(() => _loading = false);
-      }
-    }
-  }
-
-  Future<void> _selectLedger(int ledgerId) async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final activeLedger = await _api.setActiveLedger(ledgerId);
-      final records = await _api.listRecords();
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _activeLedger = activeLedger;
-        _records = records;
-      });
-    } catch (err) {
-      if (mounted) {
-        setState(() => _error = err.toString());
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _loading = false);
-      }
-    }
-  }
-
   Future<void> _createRecord() async {
-    final parsedAmount = _parseAmount(_amountController.text);
-    if (parsedAmount == null) {
-      setState(
-        () => _error = 'Amount must be a valid number, like -120 or 500.',
-      );
-      return;
+    await widget.ledgerController.createRecord(
+      category: _categoryController.text.trim(),
+      description: _descriptionController.text.trim(),
+      amountText: _amountController.text,
+    );
+    if (mounted && widget.ledgerController.error == null) {
+      _descriptionController.clear();
+      _amountController.clear();
     }
-
-    setState(() {
-      _saving = true;
-      _error = null;
-    });
-    try {
-      await _api.createRecord(
-        category: _categoryController.text.trim(),
-        description: _descriptionController.text.trim(),
-        amountCents: (parsedAmount * 100).round(),
-      );
-      final records = await _api.listRecords();
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _records = records;
-        _descriptionController.clear();
-        _amountController.clear();
-      });
-    } catch (err) {
-      if (mounted) {
-        setState(() => _error = err.toString());
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _saving = false);
-      }
-    }
-  }
-
-  double? _parseAmount(String value) {
-    final normalized = value
-        .trim()
-        .replaceAll(',', '')
-        .replaceAll(' ', '')
-        .replaceAll('NT\$', '')
-        .replaceAll('\$', '')
-        .replaceAll('元', '');
-    if (normalized.isEmpty) {
-      return null;
-    }
-    return double.tryParse(normalized);
   }
 
   @override
   Widget build(BuildContext context) {
+    final controller = widget.ledgerController;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Money Manager'),
         actions: [
           IconButton(
             tooltip: 'Refresh',
-            onPressed: _loading ? null : _loadInitialData,
+            onPressed: controller.loading ? null : controller.loadInitialData,
             icon: const Icon(Icons.refresh),
+          ),
+          AccountMenu(
+            email: widget.session.email,
+            loggingOut: widget.authController.loggingOut,
+            onLogout: widget.authController.logout,
+            onSwitchAccount: widget.authController.switchAccount,
           ),
         ],
       ),
       body: SafeArea(
-        child: _loading && _activeLedger == null
+        child: controller.loading && controller.activeLedger == null
             ? const Center(child: CircularProgressIndicator())
             : RefreshIndicator(
-                onRefresh: _loadInitialData,
+                onRefresh: controller.loadInitialData,
                 child: ListView(
                   padding: const EdgeInsets.all(16),
                   children: [
-                    _ConnectionPanel(error: _error),
+                    _ConnectionPanel(error: controller.error),
                     const SizedBox(height: 16),
                     _LedgerPanel(
-                      activeLedger: _activeLedger,
-                      ledgers: _ledgers,
-                      onChanged: _loading ? null : _selectLedger,
+                      activeLedger: controller.activeLedger,
+                      ledgers: controller.ledgers,
+                      onChanged: controller.loading
+                          ? null
+                          : controller.selectLedger,
                     ),
                     const SizedBox(height: 16),
-                    _RecordList(records: _records),
+                    _RecordList(records: controller.records),
                     const SizedBox(height: 16),
                     _CreateRecordPanel(
                       categoryController: _categoryController,
                       descriptionController: _descriptionController,
                       amountController: _amountController,
-                      saving: _saving,
-                      onSubmit: _saving ? null : _createRecord,
+                      saving: controller.saving,
+                      onSubmit: controller.saving ? null : _createRecord,
                     ),
                   ],
                 ),
               ),
       ),
+    );
+  }
+}
+
+class AccountMenu extends StatelessWidget {
+  const AccountMenu({
+    required this.email,
+    required this.loggingOut,
+    required this.onLogout,
+    required this.onSwitchAccount,
+    super.key,
+  });
+
+  final String email;
+  final bool loggingOut;
+  final VoidCallback onLogout;
+  final VoidCallback onSwitchAccount;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      tooltip: 'Account',
+      icon: const Icon(Icons.account_circle),
+      onSelected: (value) {
+        if (value == 'logout') {
+          onLogout();
+        } else if (value == 'switch') {
+          onSwitchAccount();
+        }
+      },
+      itemBuilder: (context) => [
+        PopupMenuItem(enabled: false, child: Text(email)),
+        PopupMenuItem(
+          value: 'switch',
+          enabled: !loggingOut,
+          child: const Row(
+            children: [
+              Icon(Icons.switch_account),
+              SizedBox(width: 12),
+              Text('Switch account'),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'logout',
+          enabled: !loggingOut,
+          child: Row(
+            children: [
+              if (loggingOut)
+                const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else
+                const Icon(Icons.logout),
+              const SizedBox(width: 12),
+              const Text('Sign out'),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
@@ -405,7 +363,7 @@ class _ConnectionPanel extends StatelessWidget {
             Text('Backend', style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
             Text(ApiConfig.baseUrl),
-            Text('Local user: ${ApiConfig.devEmail}'),
+            Text('Auth mode: ${ApiConfig.authMode.label}'),
             if (error != null) ...[
               const SizedBox(height: 12),
               Text(error!, style: TextStyle(color: theme.colorScheme.error)),
