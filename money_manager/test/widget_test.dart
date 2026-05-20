@@ -58,7 +58,7 @@ void main() {
             '{"ledgers":[{"id":1,"name":"Personal","type":"personal","owner_email":"you@example.com"}]}',
             200,
           ),
-          'GET /api/records' => http.Response('{"records":[]}', 200),
+          'GET /api/ledgers/1/records' => http.Response('{"records":[]}', 200),
           'POST /api/auth/logout' => http.Response('', 204),
           _ => http.Response(
             '{"error":{"code":"not_found","message":"not found"}}',
@@ -116,7 +116,7 @@ void main() {
             '{"ledgers":[{"id":1,"name":"Personal","type":"personal","owner_email":"native@example.com"}]}',
             200,
           ),
-          'GET /api/records' => http.Response('{"records":[]}', 200),
+          'GET /api/ledgers/1/records' => http.Response('{"records":[]}', 200),
           _ => http.Response(
             '{"error":{"code":"not_found","message":"not found"}}',
             404,

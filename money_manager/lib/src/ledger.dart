@@ -34,7 +34,7 @@ class LedgerController extends ChangeNotifier {
     try {
       final nextActiveLedger = await _api.getActiveLedger();
       final nextLedgers = await _api.listLedgers();
-      final nextRecords = await _api.listRecords();
+      final nextRecords = await _api.listRecords(ledgerId: nextActiveLedger.id);
       activeLedger = nextActiveLedger;
       ledgers = nextLedgers;
       records = nextRecords;
@@ -54,7 +54,7 @@ class LedgerController extends ChangeNotifier {
 
     try {
       activeLedger = await _api.setActiveLedger(ledgerId);
-      records = await _api.listRecords();
+      records = await _api.listRecords(ledgerId: ledgerId);
     } catch (err) {
       error = err.toString();
     } finally {
@@ -68,6 +68,13 @@ class LedgerController extends ChangeNotifier {
     required String description,
     required String amountText,
   }) async {
+    final ledger = activeLedger;
+    if (ledger == null) {
+      error = 'Select a ledger before adding a record.';
+      notifyListeners();
+      return;
+    }
+
     final parsedAmount = _parseAmount(amountText);
     if (parsedAmount == null) {
       error = 'Amount must be a valid number, like -120 or 500.';
@@ -81,11 +88,12 @@ class LedgerController extends ChangeNotifier {
 
     try {
       await _api.createRecord(
+        ledgerId: ledger.id,
         category: category,
         description: description,
         amountCents: (parsedAmount * 100).round(),
       );
-      records = await _api.listRecords();
+      records = await _api.listRecords(ledgerId: ledger.id);
     } catch (err) {
       error = err.toString();
     } finally {

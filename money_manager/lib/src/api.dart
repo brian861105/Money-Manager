@@ -205,8 +205,8 @@ class MicroLedgerApi {
         .toList();
   }
 
-  Future<List<LedgerRecord>> listRecords() async {
-    final json = await _send('GET', '/api/records?limit=100');
+  Future<List<LedgerRecord>> listRecords({required int ledgerId}) async {
+    final json = await _send('GET', '/api/ledgers/$ledgerId/records?limit=100');
     final items = json['records'] as List<dynamic>;
     return items
         .map((item) => LedgerRecord.fromJson(item as Map<String, dynamic>))
@@ -214,13 +214,14 @@ class MicroLedgerApi {
   }
 
   Future<LedgerRecord> createRecord({
+    required int ledgerId,
     required String category,
     required String description,
     required int amountCents,
   }) async {
     final json = await _send(
       'POST',
-      '/api/records',
+      '/api/ledgers/$ledgerId/records',
       body: {
         'date': DateTime.now().toUtc().toIso8601String(),
         'category': category,
