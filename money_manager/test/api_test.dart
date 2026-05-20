@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -150,4 +152,81 @@ void main() {
       expect(api.sessionToken, isNull);
     },
   );
+
+  test('create record sends date-only and positive amount request', () async {
+    late http.Request capturedRequest;
+    final api = MicroLedgerApi(
+      baseUrl: 'http://localhost:8080',
+      client: MockClient((request) async {
+        capturedRequest = request;
+        return http.Response(
+          '{"record":{"id":10,"ledger_id":1,"creator_email":"you@example.com","date":"2026-05-19","category":"food","sub_category":"lunch","description":"noodles","amount_cents":-12000}}',
+          200,
+        );
+      }),
+    );
+
+    final record = await api.createRecord(
+      ledgerId: 1,
+      category: 'food',
+      subCategory: 'lunch',
+      description: 'noodles',
+      amountCents: 12000,
+    );
+
+    final body = jsonDecode(capturedRequest.body) as Map<String, dynamic>;
+    expect(capturedRequest.method, 'POST');
+    expect(capturedRequest.url.path, '/api/ledgers/1/records');
+    expect(body['date'], matches(RegExp(r'^\d{4}-\d{2}-\d{2}$')));
+    expect(body['category'], 'food');
+    expect(body['sub_category'], 'lunch');
+    expect(body['description'], 'noodles');
+    expect(body['amount_cents'], 12000);
+    expect(record.subCategory, 'lunch');
+    expect(record.amountCents, -12000);
+  });
+
+  test('create record omits empty optional sub-category', () async {
+    late http.Request capturedRequest;
+    final api = MicroLedgerApi(
+      baseUrl: 'http://localhost:8080',
+      client: MockClient((request) async {
+        capturedRequest = request;
+        return http.Response(
+          '{"record":{"id":10,"ledger_id":1,"creator_email":"you@example.com","date":"2026-05-19","category":"food","description":"","amount_cents":-12000}}',
+          200,
+        );
+      }),
+    );
+
+    final record = await api.createRecord(
+      ledgerId: 1,
+      category: 'food',
+      description: '',
+      amountCents: 12000,
+    );
+
+    final body = jsonDecode(capturedRequest.body) as Map<String, dynamic>;
+    expect(body, isNot(contains('sub_category')));
+    expect(record.subCategory, isEmpty);
+  });
+
+  test('create record rejects non-positive request amounts', () async {
+    final api = MicroLedgerApi(
+      baseUrl: 'http://localhost:8080',
+      client: MockClient((_) async {
+        fail('request should not be sent');
+      }),
+    );
+
+    await expectLater(
+      api.createRecord(
+        ledgerId: 1,
+        category: 'food',
+        description: '',
+        amountCents: -12000,
+      ),
+      throwsArgumentError,
+    );
+  });
 }

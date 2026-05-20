@@ -100,6 +100,7 @@ class LedgerRecord {
     required this.creatorEmail,
     required this.date,
     required this.category,
+    required this.subCategory,
     required this.description,
     required this.amountCents,
   });
@@ -111,6 +112,7 @@ class LedgerRecord {
       creatorEmail: json['creator_email'] as String,
       date: DateTime.parse(json['date'] as String),
       category: json['category'] as String,
+      subCategory: json['sub_category'] as String? ?? '',
       description: json['description'] as String? ?? '',
       amountCents: json['amount_cents'] as int,
     );
@@ -121,6 +123,7 @@ class LedgerRecord {
   final String creatorEmail;
   final DateTime date;
   final String category;
+  final String subCategory;
   final String description;
   final int amountCents;
 }
@@ -218,13 +221,19 @@ class MicroLedgerApi {
     required String category,
     required String description,
     required int amountCents,
+    String subCategory = '',
   }) async {
+    if (amountCents <= 0) {
+      throw ArgumentError.value(amountCents, 'amountCents', 'must be positive');
+    }
+
     final json = await _send(
       'POST',
       '/api/ledgers/$ledgerId/records',
       body: {
-        'date': DateTime.now().toUtc().toIso8601String(),
+        'date': _formatDateOnly(DateTime.now()),
         'category': category,
+        if (subCategory.isNotEmpty) 'sub_category': subCategory,
         'description': description,
         'amount_cents': amountCents,
       },
@@ -289,5 +298,12 @@ class MicroLedgerApi {
 
   void close() {
     _client.close();
+  }
+
+  String _formatDateOnly(DateTime date) {
+    final local = date.toLocal();
+    final month = local.month.toString().padLeft(2, '0');
+    final day = local.day.toString().padLeft(2, '0');
+    return '${local.year}-$month-$day';
   }
 }

@@ -76,8 +76,8 @@ class LedgerController extends ChangeNotifier {
     }
 
     final parsedAmount = _parseAmount(amountText);
-    if (parsedAmount == null) {
-      error = 'Amount must be a valid number, like -120 or 500.';
+    if (parsedAmount == null || parsedAmount <= 0) {
+      error = 'Amount must be a positive number, like 120 or 500.';
       notifyListeners();
       return;
     }

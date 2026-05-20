@@ -476,13 +476,12 @@ class _CreateRecordPanel extends StatelessWidget {
             TextField(
               controller: amountController,
               keyboardType: const TextInputType.numberWithOptions(
-                signed: true,
                 decimal: true,
               ),
               decoration: const InputDecoration(
                 border: OutlineInputBorder(),
                 labelText: 'Amount',
-                helperText: 'Examples: -120, 500, NT\$1,200',
+                helperText: 'Examples: 120, 500, NT\$1,200',
               ),
             ),
             const SizedBox(height: 12),
@@ -549,11 +548,26 @@ class _RecordTile extends StatelessWidget {
       title: Text(
         record.description.isEmpty ? record.category : record.description,
       ),
-      subtitle: Text('${record.category} · ${record.date.toLocal()}'),
+      subtitle: Text(_subtitle(record)),
       trailing: Text(
         amount.toStringAsFixed(2),
         style: TextStyle(color: amountColor, fontWeight: FontWeight.w700),
       ),
     );
+  }
+
+  String _subtitle(LedgerRecord record) {
+    final date = _formatDate(record.date);
+    if (record.subCategory.isEmpty) {
+      return '${record.category} · $date';
+    }
+    return '${record.category} / ${record.subCategory} · $date';
+  }
+
+  String _formatDate(DateTime date) {
+    final local = date.toLocal();
+    final month = local.month.toString().padLeft(2, '0');
+    final day = local.day.toString().padLeft(2, '0');
+    return '${local.year}-$month-$day';
   }
 }
